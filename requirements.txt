@@ -1,0 +1,13 @@
+addict
+yapf
+termcolor
+numpy
+tqdm
+einops
+scipy
+scikit-image
+kornia
+pycocotools
+pillow==10.0.1
+opencv-python-headless==4.8.0.76
+timm==0.6.13
