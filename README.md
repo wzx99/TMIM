@@ -1,6 +1,6 @@
 # Leveraging Text Localization for Scene Text Removal via Text-aware Masked Image Modeling 
 
-This is a pytorch implementation for paper [TMIM](https://eccv.ecva.net/virtual/2024/poster/1880)
+This is a pytorch implementation for paper [TMIM](https://arxiv.org/abs/2409.13431)
 
 ## Installation
 
@@ -19,7 +19,7 @@ pip install -r requirements.txt
 ```
 
 ### 2.Datasets
-- Create a "data" folder. Download text removel dataset ([SCUT-Enstext](https://github.com/HCIILAB/SCUT-EnsText)) and text detection datasets([TextOCR](https://textvqa.org/textocr/dataset/), [Total-Text](https://github.com/cs-chan/Total-Text-Dataset), [ICDAR2015](https://rrc.cvc.uab.es/?ch=4&com=downloads), [COCO-Text](https://bgshih.github.io/cocotext/#h2-download), [MLT19](https://rrc.cvc.uab.es/?ch=15&com=downloads), [ArT](https://rrc.cvc.uab.es/?ch=14&com=downloads), [lsvt](https://rrc.cvc.uab.es/?ch=16&com=downloads)(fullly annotated), [ReCTS](https://rrc.cvc.uab.es/?ch=12&com=downloads)). 
+- Create a "data" folder. Download text removal dataset ([SCUT-Enstext](https://github.com/HCIILAB/SCUT-EnsText)) and text detection datasets([TextOCR](https://textvqa.org/textocr/dataset/), [Total-Text](https://github.com/cs-chan/Total-Text-Dataset), [ICDAR2015](https://rrc.cvc.uab.es/?ch=4&com=downloads), [COCO-Text](https://bgshih.github.io/cocotext/#h2-download), [MLT19](https://rrc.cvc.uab.es/?ch=15&com=downloads), [ArT](https://rrc.cvc.uab.es/?ch=14&com=downloads), [lsvt](https://rrc.cvc.uab.es/?ch=16&com=downloads)(fullly annotated), [ReCTS](https://rrc.cvc.uab.es/?ch=12&com=downloads)). 
 - Create the coco-style annotations for text detection datasets with the code in utils/prepare_dataset/ (or download them from [here(data.zip)](https://drive.google.com/drive/folders/1g3kLDe-WuSKmag978XhRRoc9Wg9riy7r?usp=sharing). 
 - The structure of the data folder is shown below.
 
@@ -83,7 +83,7 @@ python -m torch.distributed.launch --master_port 29501 --nproc_per_node=1 demo.p
 ```
 
 ## Training and Testing
-- Set the "snapshot_dir"(The location for saving the checpoints) and "dataroot"(The location of the datasets) in configs/*.py
+- Set the "snapshot_dir"(The location for saving the checkpoints) and "dataroot"(The location of the datasets) in configs/*.py
 - Erasenet and Pert require 4 1080ti GPUs. Uformer requires 8 1080ti GPUs
 
 ### 1.Pretraining
@@ -97,7 +97,7 @@ python test.py --cfg configs/uformer_b_tmim.py --ckpt-name uformer_b_tmim/latest
 ```
 
 ### 2.Finetuning
- - Run the following command to finetune the model on text removal datasets..
+ - Run the following command to finetune the model on text removal datasets.
 ```bash
 python -m torch.distributed.launch --master_port 29501} --nproc_per_node=8 train.py --cfg configs/uformer_b_str.py --ckpt-name uformer_b_tmim_str --save-log --resume 'ckpt/uformer_b_tmim/latest.pth'
 ```
