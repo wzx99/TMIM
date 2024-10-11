@@ -47,7 +47,7 @@ test_data_cfg = dict(
     data_type='str',
     data_class='standard', # mask
     data_dir=data_root+'text_rmv/SCUT-EnsText/test',
-    img_size=img_size,
+    img_size=None,
     augment=False,
 )
 

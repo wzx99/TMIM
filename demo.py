@@ -18,8 +18,8 @@ from mmengine.config import Config
 def pad(image, mask=None):
     h, w = image.size()[-2:]
     stride = 8
-    pad_h = (stride + 1 - h % stride) % stride
-    pad_w = (stride + 1 - w % stride) % stride
+    pad_h = (stride - h % stride) % stride
+    pad_w = (stride - w % stride) % stride
     if pad_h > 0 or pad_w > 0:
         image = F.pad(image, (0, pad_w, 0, pad_h), mode='constant', value=0.)
         if mask is not None:
@@ -90,8 +90,8 @@ def main():
 
             with torch.no_grad():
                 h,w = image.shape[2:]
-                # image = pad(image)
-                # pred = model(image.to(device))[0,:,:h,:w]
+                # image_input = pad(image)
+                # pred = model(image_input.to(device))[0,:,:h,:w]
                 image_input = F.interpolate(image, size=cfg.img_size, mode='bilinear', align_corners=False)
                 pred = model(image_input.to(device))
                 pred = F.interpolate(pred, size=(h, w), mode='bilinear', align_corners=False)[0]
