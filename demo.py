@@ -135,7 +135,6 @@ def main():
                     pred = predict_sliding(model, image.to(device), cfg.img_size)[0]
                 elif args.infer_type == 'whole':
                     image_input = pad(image)
-                    print(image_input.shape)
                     pred = model(image_input.to(device))[0, :, :h, :w]  #image_input.half().to(device)
             pred = torch.clamp(pred, 0.0, 1.0).cpu()
             if len(data)==3:
