@@ -17,7 +17,7 @@ from utils.pyt_utils import get_main_flag
 
 class FastLeFF(nn.Module):
     
-    def __init__(self, dim=32, hidden_dim=128, act_layer=nn.GELU,drop = 0., input_resolution=None):
+    def __init__(self, dim=32, hidden_dim=128, act_layer=nn.GELU,drop = 0.):
         super().__init__()
 
         from torch_dwconv import depthwise_conv2d, DepthwiseConv2d
@@ -29,12 +29,11 @@ class FastLeFF(nn.Module):
         self.linear2 = nn.Sequential(nn.Linear(hidden_dim, dim))
         self.dim = dim
         self.hidden_dim = hidden_dim
-        self.input_resolution = input_resolution
 
-    def forward(self, x):
+    def forward(self, x, input_resolution):
         # bs x hw x c
         bs, hw, c = x.size()
-        h, w = self.input_resolution[0], self.input_resolution[1]
+        h, w = input_resolution[0], input_resolution[1]
 
         x = self.linear1(x)
 
@@ -639,7 +638,7 @@ class Mlp(nn.Module):
         self.hidden_features = hidden_features
         self.out_features = out_features
 
-    def forward(self, x):
+    def forward(self, x, *args, **kwargs):
         x = self.fc1(x)
         x = self.act(x)
         x = self.drop(x)
@@ -658,7 +657,7 @@ class Mlp(nn.Module):
 
 
 class LeFF(nn.Module):
-    def __init__(self, dim=32, hidden_dim=128, act_layer=nn.GELU,drop = 0., use_eca=False, input_resolution=None ):
+    def __init__(self, dim=32, hidden_dim=128, act_layer=nn.GELU, drop = 0., use_eca=False):
         super().__init__()
         self.linear1 = nn.Sequential(nn.Linear(dim, hidden_dim),
                                 act_layer())
@@ -668,13 +667,12 @@ class LeFF(nn.Module):
         self.dim = dim
         self.hidden_dim = hidden_dim
         self.eca = eca_layer_1d(dim) if use_eca else nn.Identity()
-        self.input_resolution = input_resolution
 
-    def forward(self, x):
+    def forward(self, x, input_resolution):
         # bs x hw x c
         bs, hw, c = x.size()
-        h = self.input_resolution[0]
-        w = self.input_resolution[1]
+        h = input_resolution[0]
+        w = input_resolution[1]
 
         x = self.linear1(x)
 
@@ -853,21 +851,17 @@ class OutputProj(nn.Module):
 #########################################
 ########### LeWinTransformer #############
 class LeWinTransformerBlock(nn.Module):
-    def __init__(self, dim, input_resolution, num_heads, win_size=8, shift_size=0,
+    def __init__(self, dim, num_heads, win_size=8, shift_size=0,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0., drop_path=0.,
                  act_layer=nn.GELU, norm_layer=nn.LayerNorm,token_projection='linear',token_mlp='leff',
                  modulator=False,cross_modulator=False):
         super().__init__()
         self.dim = dim
-        self.input_resolution = input_resolution
         self.num_heads = num_heads
         self.win_size = win_size
         self.shift_size = shift_size
         self.mlp_ratio = mlp_ratio
         self.token_mlp = token_mlp
-        if min(self.input_resolution) <= self.win_size:
-            self.shift_size = 0
-            self.win_size = min(self.input_resolution)
         assert 0 <= self.shift_size < self.win_size, "shift_size must in 0-win_size"
 
         if modulator:
@@ -895,25 +889,25 @@ class LeWinTransformerBlock(nn.Module):
         if token_mlp in ['ffn','mlp']:
             self.mlp = Mlp(in_features=dim, hidden_features=mlp_hidden_dim,act_layer=act_layer, drop=drop) 
         elif token_mlp=='leff':
-            self.mlp =  LeFF(dim,mlp_hidden_dim,act_layer=act_layer, drop=drop, input_resolution=input_resolution)
+            self.mlp =  LeFF(dim,mlp_hidden_dim,act_layer=act_layer, drop=drop)
         
         elif token_mlp=='fastleff':
-            self.mlp =  FastLeFF(dim,mlp_hidden_dim,act_layer=act_layer, drop=drop, input_resolution=input_resolution)    
+            self.mlp =  FastLeFF(dim,mlp_hidden_dim,act_layer=act_layer, drop=drop)
         else:
             raise Exception("FFN error!") 
 
 
     def with_pos_embed(self, tensor, pos):
         return tensor if pos is None else tensor + pos
-        
+
     def extra_repr(self) -> str:
         return f"dim={self.dim}, input_resolution={self.input_resolution}, num_heads={self.num_heads}, " \
                f"win_size={self.win_size}, shift_size={self.shift_size}, mlp_ratio={self.mlp_ratio},modulator={self.modulator}"
 
-    def forward(self, x, mask=None):
+    def forward(self, x, input_resolution, mask=None):
         B, L, C = x.shape
-        H = self.input_resolution[0]
-        W = self.input_resolution[1]
+        H = input_resolution[0]
+        W = input_resolution[1]
         
         ## input mask
         if mask != None:
@@ -989,7 +983,7 @@ class LeWinTransformerBlock(nn.Module):
 
         # FFN
         x = shortcut + self.drop_path(x)
-        x = x + self.drop_path(self.mlp(self.norm2(x)))
+        x = x + self.drop_path(self.mlp(self.norm2(x), input_resolution))
         del attn_mask
         return x
 
@@ -1016,7 +1010,7 @@ class LeWinTransformerBlock(nn.Module):
 #########################################
 ########### Basic layer of Uformer ################
 class BasicUformerLayer(nn.Module):
-    def __init__(self, dim, output_dim, input_resolution, depth, num_heads, win_size,
+    def __init__(self, dim, output_dim, depth, num_heads, win_size,
                  mlp_ratio=4., qkv_bias=True, qk_scale=None, drop=0., attn_drop=0.,
                  drop_path=0., norm_layer=nn.LayerNorm, use_checkpoint=False,
                  token_projection='linear',token_mlp='ffn', shift_flag=True,
@@ -1024,13 +1018,12 @@ class BasicUformerLayer(nn.Module):
 
         super().__init__()
         self.dim = dim
-        self.input_resolution = input_resolution
         self.depth = depth
         self.use_checkpoint = use_checkpoint
         # build blocks
         if shift_flag:
             self.blocks = nn.ModuleList([
-                LeWinTransformerBlock(dim=dim, input_resolution=input_resolution,
+                LeWinTransformerBlock(dim=dim,
                                     num_heads=num_heads, win_size=win_size,
                                     shift_size=0 if (i % 2 == 0) else win_size // 2,
                                     mlp_ratio=mlp_ratio,
@@ -1042,7 +1035,7 @@ class BasicUformerLayer(nn.Module):
                 for i in range(depth)])
         else:
             self.blocks = nn.ModuleList([
-                LeWinTransformerBlock(dim=dim, input_resolution=input_resolution,
+                LeWinTransformerBlock(dim=dim,
                                     num_heads=num_heads, win_size=win_size,
                                     shift_size=0,
                                     mlp_ratio=mlp_ratio,
@@ -1056,12 +1049,12 @@ class BasicUformerLayer(nn.Module):
     def extra_repr(self) -> str:
         return f"dim={self.dim}, input_resolution={self.input_resolution}, depth={self.depth}"    
 
-    def forward(self, x, mask=None):
+    def forward(self, x, input_resolution, mask=None):
         for blk in self.blocks:
             if self.use_checkpoint:
-                x = checkpoint.checkpoint(blk, x)
+                x = checkpoint.checkpoint(blk, x, input_resolution)
             else:
-                x = blk(x,mask)
+                x = blk(x, input_resolution, mask)
         return x
 
     def flops(self):
@@ -1071,7 +1064,7 @@ class BasicUformerLayer(nn.Module):
         return flops
 
 class Uformer(nn.Module):
-    def __init__(self, img_size=256, in_chans=3, dd_in=3,
+    def __init__(self, in_chans=3, dd_in=3,
                  embed_dim=32, depths=[2, 2, 2, 2, 2, 2, 2, 2, 2], num_heads=[1, 2, 4, 8, 16, 16, 8, 4, 2],
                  win_size=8, mlp_ratio=4., qkv_bias=True, qk_scale=None,
                  drop_rate=0., attn_drop_rate=0., drop_path_rate=0.1,
@@ -1089,7 +1082,6 @@ class Uformer(nn.Module):
         self.token_projection = token_projection
         self.mlp = token_mlp
         self.win_size =win_size
-        self.reso = img_size
         self.pos_drop = nn.Dropout(p=drop_rate)
         self.dd_in = dd_in
         self.tmim = tmim
@@ -1108,8 +1100,6 @@ class Uformer(nn.Module):
         # Encoder
         self.encoderlayer_0 = BasicUformerLayer(dim=embed_dim,
                             output_dim=embed_dim,
-                            input_resolution=(img_size[0],
-                                                img_size[1]),
                             depth=depths[0],
                             num_heads=num_heads[0],
                             win_size=win_size,
@@ -1123,8 +1113,6 @@ class Uformer(nn.Module):
         self.dowsample_0 = dowsample(embed_dim, embed_dim*2)
         self.encoderlayer_1 = BasicUformerLayer(dim=embed_dim*2,
                             output_dim=embed_dim*2,
-                            input_resolution=(img_size[0] // 2,
-                                                img_size[1] // 2),
                             depth=depths[1],
                             num_heads=num_heads[1],
                             win_size=win_size,
@@ -1138,8 +1126,6 @@ class Uformer(nn.Module):
         self.dowsample_1 = dowsample(embed_dim*2, embed_dim*4)
         self.encoderlayer_2 = BasicUformerLayer(dim=embed_dim*4,
                             output_dim=embed_dim*4,
-                            input_resolution=(img_size[0] // (2 ** 2),
-                                                img_size[1] // (2 ** 2)),
                             depth=depths[2],
                             num_heads=num_heads[2],
                             win_size=win_size,
@@ -1153,8 +1139,6 @@ class Uformer(nn.Module):
         self.dowsample_2 = dowsample(embed_dim*4, embed_dim*8)
         self.encoderlayer_3 = BasicUformerLayer(dim=embed_dim*8,
                             output_dim=embed_dim*8,
-                            input_resolution=(img_size[0] // (2 ** 3),
-                                                img_size[1] // (2 ** 3)),
                             depth=depths[3],
                             num_heads=num_heads[3],
                             win_size=win_size,
@@ -1170,8 +1154,6 @@ class Uformer(nn.Module):
         # Bottleneck
         self.conv = BasicUformerLayer(dim=embed_dim*16,
                             output_dim=embed_dim*16,
-                            input_resolution=(img_size[0] // (2 ** 4),
-                                                img_size[1] // (2 ** 4)),
                             depth=depths[4],
                             num_heads=num_heads[4],
                             win_size=win_size,
@@ -1187,8 +1169,6 @@ class Uformer(nn.Module):
         self.upsample_0 = upsample(embed_dim*16, embed_dim*8)
         self.decoderlayer_0 = BasicUformerLayer(dim=embed_dim*16,
                             output_dim=embed_dim*16,
-                            input_resolution=(img_size[0] // (2 ** 3),
-                                                img_size[1] // (2 ** 3)),
                             depth=depths[5],
                             num_heads=num_heads[5],
                             win_size=win_size,
@@ -1203,8 +1183,6 @@ class Uformer(nn.Module):
         self.upsample_1 = upsample(embed_dim*16, embed_dim*4)
         self.decoderlayer_1 = BasicUformerLayer(dim=embed_dim*8,
                             output_dim=embed_dim*8,
-                            input_resolution=(img_size[0] // (2 ** 2),
-                                                img_size[1] // (2 ** 2)),
                             depth=depths[6],
                             num_heads=num_heads[6],
                             win_size=win_size,
@@ -1219,8 +1197,6 @@ class Uformer(nn.Module):
         self.upsample_2 = upsample(embed_dim*8, embed_dim*2)
         self.decoderlayer_2 = BasicUformerLayer(dim=embed_dim*4,
                             output_dim=embed_dim*4,
-                            input_resolution=(img_size[0] // 2,
-                                                img_size[1] // 2),
                             depth=depths[7],
                             num_heads=num_heads[7],
                             win_size=win_size,
@@ -1235,8 +1211,6 @@ class Uformer(nn.Module):
         self.upsample_3 = upsample(embed_dim*4, embed_dim)
         self.decoderlayer_3 = BasicUformerLayer(dim=embed_dim*2,
                             output_dim=embed_dim*2,
-                            input_resolution=(img_size[0],
-                                                img_size[1]),
                             depth=depths[8],
                             num_heads=num_heads[8],
                             win_size=win_size,
@@ -1279,44 +1253,45 @@ class Uformer(nn.Module):
 
     def forward(self, x, prompt=None):
         x = x.cuda(non_blocking=True)
+        H,W = x.shape[2:]
         # Input Projection
         y = self.input_proj(x)
         y = self.pos_drop(y)
         #Encoder
-        conv0 = self.encoderlayer_0(y)
-        pool0 = self.dowsample_0(conv0, (self.reso[0], self.reso[1]))
-        conv1 = self.encoderlayer_1(pool0)
-        pool1 = self.dowsample_1(conv1, (self.reso[0]//2, self.reso[1]//2))
-        conv2 = self.encoderlayer_2(pool1)
-        pool2 = self.dowsample_2(conv2, (self.reso[0]//4, self.reso[1]//4))
-        conv3 = self.encoderlayer_3(pool2)
-        pool3 = self.dowsample_3(conv3, (self.reso[0]//8, self.reso[1]//8))
+        conv0 = self.encoderlayer_0(y, (H,W))
+        pool0 = self.dowsample_0(conv0, (H,W))
+        conv1 = self.encoderlayer_1(pool0, (H//2,W//2))
+        pool1 = self.dowsample_1(conv1, (H//2,W//2))
+        conv2 = self.encoderlayer_2(pool1, (H//4,W//4))
+        pool2 = self.dowsample_2(conv2, (H//4,W//4))
+        conv3 = self.encoderlayer_3(pool2, (H//8,W//8))
+        pool3 = self.dowsample_3(conv3, (H//8,W//8))
 
         # Bottleneck
-        conv4 = self.conv(pool3)
+        conv4 = self.conv(pool3, (H//16,W//16))
         if self.tmim:
             prompt = (self.task_prompt(prompt)*(1-prompt).unsqueeze(1)).unsqueeze(1)
             conv4 = conv4 + prompt
 
         #Decoder
-        up0 = self.upsample_0(conv4, (self.reso[0]//16, self.reso[1]//16))
+        up0 = self.upsample_0(conv4, (H//16,W//16))
         deconv0 = torch.cat([up0,conv3],-1)
-        deconv0 = self.decoderlayer_0(deconv0)
+        deconv0 = self.decoderlayer_0(deconv0, (H//8,W//8))
         
-        up1 = self.upsample_1(deconv0, (self.reso[0]//8, self.reso[1]//8))
+        up1 = self.upsample_1(deconv0, (H//8,W//8))
         deconv1 = torch.cat([up1,conv2],-1)
-        deconv1 = self.decoderlayer_1(deconv1)
+        deconv1 = self.decoderlayer_1(deconv1, (H//4,W//4))
 
-        up2 = self.upsample_2(deconv1, (self.reso[0]//4, self.reso[1]//4))
+        up2 = self.upsample_2(deconv1, (H//4,W//4))
         deconv2 = torch.cat([up2,conv1],-1)
-        deconv2 = self.decoderlayer_2(deconv2)
+        deconv2 = self.decoderlayer_2(deconv2, (H//2,W//2))
 
-        up3 = self.upsample_3(deconv2, (self.reso[0]//2, self.reso[1]//2))
+        up3 = self.upsample_3(deconv2, (H//2,W//2))
         deconv3 = torch.cat([up3,conv0],-1)
-        deconv3 = self.decoderlayer_3(deconv3)
+        deconv3 = self.decoderlayer_3(deconv3, (H,W))
 
         # Output Projection
-        y = self.output_proj(deconv3, (self.reso[0], self.reso[1]))
+        y = self.output_proj(deconv3, (H,W))
         return y
 
 

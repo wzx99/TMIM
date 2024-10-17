@@ -6,6 +6,7 @@ import cv2
 import numpy as np
 import torch
 import torch.nn.functional as F
+from math import ceil
 
 from engine import Engine
 from models import build_model
@@ -17,7 +18,7 @@ from mmengine.config import Config
 
 def pad(image, mask=None):
     h, w = image.size()[-2:]
-    stride = 8
+    stride = 128
     pad_h = (stride - h % stride) % stride
     pad_w = (stride - w % stride) % stride
     if pad_h > 0 or pad_w > 0:
@@ -26,6 +27,40 @@ def pad(image, mask=None):
             mask = F.pad(mask, (0, pad_w, 0, pad_h), mode='constant', value=0)
             return image, mask
     return image
+
+
+def predict_sliding(net, image, tile_size):
+    image_size = image.shape
+    overlap = 1/3
+
+    stride = ceil(tile_size[0] * (1 - overlap))
+    tile_rows = max(int(ceil((image_size[2] - tile_size[0]) / stride) + 1),1)  # strided convolution formula
+    tile_cols = max(int(ceil((image_size[3] - tile_size[1]) / stride) + 1),1)
+    full_probs = torch.zeros((image_size[0],3, image_size[2], image_size[3]))
+    count_predictions = torch.zeros((1, 3, image_size[2], image_size[3]))
+
+    for row in range(tile_rows):
+        for col in range(tile_cols):
+            x1 = int(col * stride)
+            y1 = int(row * stride)
+            x2 = min(x1 + tile_size[1], image_size[3])
+            y2 = min(y1 + tile_size[0], image_size[2])
+            x1 = max(int(x2 - tile_size[1]), 0)  # for portrait images the x1 underflows sometimes
+            y1 = max(int(y2 - tile_size[0]), 0)  # for very few rows y1 underflows
+
+            img = image[:, :, y1:y2, x1:x2]
+            padded_img = pad(img)
+            padded_prediction = net(padded_img.cuda(non_blocking=True))
+            if isinstance(padded_prediction, list):
+                padded_prediction = padded_prediction[0]
+            elif isinstance(padded_prediction, dict):
+                padded_prediction = padded_prediction['pred']
+            prediction = padded_prediction.cpu()[:, :, 0:img.shape[2], 0:img.shape[3]]
+            count_predictions[0, :, y1:y2, x1:x2] += 1
+            full_probs[:, :, y1:y2, x1:x2] += prediction  # accumulate the predictions also in the overlapping regions
+
+    full_probs /= count_predictions
+    return full_probs
 
 
 @torch.inference_mode()
@@ -37,6 +72,7 @@ def main():
     parser.add_argument("--mask-dir", type=str, default=None)
     parser.add_argument("--variant", type=str, default='standard')
     parser.add_argument("--visualize-dir", type=str, default=None)
+    parser.add_argument("--infer-type", type=str, default='resize', choices=['resize', 'slide', 'whole'])
 
     with Engine(custom_parser=parser) as engine:
         main_flag = get_main_flag()
@@ -76,6 +112,7 @@ def main():
         load_model(model, args.resume, ignore_prefix='module.')
         if main_flag:
             logger.info('resume from {}'.format(args.resume))
+        # model.half()
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model.to(device)
         model = engine.data_parallel(model)
@@ -89,12 +126,17 @@ def main():
                 mask = mask.repeat(1,3,1,1)
 
             with torch.no_grad():
-                h,w = image.shape[2:]
-                # image_input = pad(image)
-                # pred = model(image_input.to(device))[0,:,:h,:w]
-                image_input = F.interpolate(image, size=cfg.img_size, mode='bilinear', align_corners=False)
-                pred = model(image_input.to(device))
-                pred = F.interpolate(pred, size=(h, w), mode='bilinear', align_corners=False)[0]
+                h, w = image.shape[2:]
+                if args.infer_type=='resize':
+                    image_input = F.interpolate(image, size=cfg.img_size, mode='bilinear', align_corners=False)
+                    pred = model(image_input.to(device))
+                    pred = F.interpolate(pred, size=(h, w), mode='bilinear', align_corners=False)[0]
+                elif args.infer_type=='slide':
+                    pred = predict_sliding(model, image.to(device), cfg.img_size)[0]
+                elif args.infer_type == 'whole':
+                    image_input = pad(image)
+                    print(image_input.shape)
+                    pred = model(image_input.to(device))[0, :, :h, :w]  #image_input.half().to(device)
             pred = torch.clamp(pred, 0.0, 1.0).cpu()
             if len(data)==3:
                 pred = pred*mask[0]+image[0]*(1-mask[0])
