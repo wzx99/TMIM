@@ -71,7 +71,7 @@ def main():
         # data loader
         train_dataset = build_dataset(cfg.train_data_cfg)
         train_loader, train_sampler = engine.get_train_loader(train_dataset, cfg.train_data_cfg)
-        val_dataset = build_dataset(cfg.val_data_cfg, 'val')
+        val_dataset = build_dataset(cfg.val_data_cfg)
         val_loader, val_sampler = engine.get_test_loader(val_dataset, cfg.val_data_cfg)
         if main_flag:
             logger.info('Total {} samples for training'.format(train_dataset.__len__()))
